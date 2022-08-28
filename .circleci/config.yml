@@ -1,0 +1,198 @@
+version: 2.1
+
+orbs:
+  docker: circleci/docker@2.1.2
+
+commands:
+  install-awscli:
+    description: Install awscli
+    steps:
+      - run:
+          name: Install awscli
+          command: |
+            sudo apt update
+            sudo apt-get install awscli
+            sudo apt-get install gettext-base
+
+  aws-iam:
+    description: Install aws-iam-authenticator
+    steps:
+      - run:
+          name: Install aws-iam-authenticator
+          command: |
+            curl -o aws-iam-authenticator curl -o aws-iam-authenticator \
+              https://amazon-eks.s3-us-east-1.amazonaws.com/1.13.7/2019-06-11/bin/linux/amd64/aws-iam-authenticator
+            chmod +x ./aws-iam-authenticator
+            sudo mv ./aws-iam-authenticator /usr/local/bin/aws-iam-authenticator
+
+  install-kubectl:
+    description: Install kubectl
+    steps:
+      - run:
+          name: Install kubectl
+          command: |
+            curl -o kubectl https://amazon-eks.s3-us-east-1.amazonaws.com/1.13.7/2019-06-11/bin/linux/amd64/kubectl
+            chmod +x ./kubectl
+            sudo mv ./kubectl /usr/local/bin/kubectl
+
+jobs:
+  run-lint:
+    docker:
+      - image: python:3.7.3-stretch
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "app/requirements.txt" }}
+            - v1-dependencies-
+      - run:
+          name: Install dependencies
+          command: |
+            chmod -R +x ./bin/
+            python3 -m venv .devops-microservices
+            source .devops-microservices/bin/activate
+            make install
+      - save_cache:
+          paths:
+            - ./.devops-microservices
+          key: v1-dependencies-{{ checksum "app/requirements.txt" }}
+      - run:
+          name: Run lint
+          command: |
+            source .devops-microservices/bin/activate
+            make lint
+
+  build-and-push-docker-image:
+    docker:
+      - image: cimg/node:13.8.0
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 19.03.13
+      - run:
+          name: Build and push docker image
+          command: |
+            export VERSION=$(<app/version.txt)
+            
+            # Build docker image
+            docker build -t flask-app app
+            
+            # Tag image
+            docker tag flask-app ${DOCKER_HUB_ID}/${DOCKER_REPOSITORY}:${VERSION}
+            docker tag flask-app ${DOCKER_HUB_ID}/${DOCKER_REPOSITORY}:lastest
+            
+            # Login to docker-hub
+            docker login -u $DOCKER_LOGIN -p $DOCKER_PASSWORD
+            
+            docker push ${DOCKER_HUB_ID}/${DOCKER_REPOSITORY}:${VERSION}
+            docker push ${DOCKER_HUB_ID}/${DOCKER_REPOSITORY}:lastest
+
+  deploy-green:
+    docker:
+      - image: cimg/python:3.7.13
+    steps:
+      - checkout
+      - install-awscli
+      - aws-iam
+      - install-kubectl
+      - run:
+          name: Connect to cluster
+          command: |
+            aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name $CLUSTER_NAME
+      - run:
+          name: Deploy new version as green
+          command: |
+            export VERSION=$(<app/version.txt)
+            export DOCKER_IMAGE=${DOCKER_HUB_ID}/${DOCKER_REPOSITORY}:${VERSION}
+            export LABEL_VERSION=${VERSION/./-}
+            
+            echo "DOCKER_IMAGE: $DOCKER_IMAGE"
+            echo "LABEL_VERSION: $LABEL_VERSION"
+            
+            envsubst < k8s/deployment.yaml | kubectl apply --filename -
+            
+            # service-green.yaml creates the flask-app-green service
+            envsubst < k8s/service-green.yaml | kubectl apply --filename -
+
+            sleep 3
+            LOAD_BALANCER=$(kubectl get services \
+              flask-app-green \
+              --output jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            echo "LOAD_BALANCER: $LOAD_BALANCER"
+
+  wait-manual-approval:
+    docker:
+      - image: cimg/node:13.8.0
+    steps:
+      - run: echo "Wait for a manual approval"
+
+  deploy-new-blue:
+    docker:
+      - image: cimg/python:3.7.13
+    steps:
+      - checkout
+      - install-awscli
+      - aws-iam
+      - install-kubectl
+      - run:
+          name: Connect to cluster
+          command: |
+            aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name $CLUSTER_NAME
+      - run:
+          name: Target new version — new blue
+          command: |
+            export VERSION=$(<app/version.txt)
+            export LABEL_VERSION=${VERSION/./-}
+            echo "LABEL_VERSION: $LABEL_VERSION"
+            # flask-app service target now labeled new version
+            envsubst < k8s/service.yaml | kubectl apply --filename -
+
+  remove-old-blue:
+    docker:
+      - image: cimg/python:3.7.13
+    steps:
+      - checkout
+      - install-awscli
+      - aws-iam
+      - install-kubectl
+      - run:
+          name: Connect to cluster
+          command: |
+            aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name $CLUSTER_NAME
+      - run:
+          name: Remove the old version flask-app
+          command: |
+            export VERSION=$(<app/version.txt)
+            export LABEL_VERSION=${VERSION/./-}
+            echo "LABEL_VERSION: $LABEL_VERSION"
+            
+            # Remove the flask-app-x-x deployment
+            for deploy in $(kubectl get deployments -o jsonpath="{.items[*].metadata.name}" | grep flask-app);
+            do
+              if [[ $deploy != flask-app-$LABEL_VERSION ]];
+              then
+                kubectl delete deployments $deploy
+              fi
+            done
+            
+            # Remove the flask-app-green service
+            if kubectl get services | grep flask-app-green;
+            then
+              kubectl delete services flask-app-green
+            fi
+
+workflows:
+  default:
+    jobs:
+      - run-lint
+      - build-and-push-docker-image:
+          requires: [run-lint]
+      - deploy-green:
+          requires: [build-and-push-docker-image]
+      - wait-manual-approval:
+          type: approval
+          requires: [deploy-green]
+      - deploy-new-blue:
+          requires: [wait-manual-approval]
+      - remove-old-blue:
+          requires: [deploy-new-blue]

@@ -1,0 +1,20 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: production
+  region: us-east-1
+
+iam:
+  withOIDC: true
+
+nodeGroups:
+  - name: flask-app
+    instanceType: t2.small
+    amiFamily: AmazonLinux2
+    minSize: 2
+    maxSize: 3
+    volumeSize: 30
+    ssh:
+      allow: true
+      publicKeyName: primary-key
