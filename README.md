@@ -7,14 +7,14 @@
 
 <hr>
 
-
 ### Development
 
-- Simple flask application.
+- Simple flask application with basic deployment using blue-green pattern.
 
 <hr>
 
-- **Develop (Local manual check):**
+### Local check
+- **Develop**
 
   ```
   $ make setup
@@ -23,7 +23,7 @@
   $ make lint
   $ make run-app
   ```
-- **Docker Containerization (Local manual check):**
+- **Docker Containerization**
   ```
   $ make build-docker
   $ make run-docker
@@ -36,16 +36,16 @@
 - Install eksctl
 - Install kubectl
 - Create Amazon EKS cluster:
-  1. Create key pair: `key-pair-us-west-2` use to connect to nodes in cluster.
-  2. Use [infa/cluster.yaml](./infa/cluster.yaml) to create Amazon EKS cluster (take ~ 15-20 mins)
+  1. Create key pair: `primary-key` use to connect to nodes in cluster.
+  2. Use [infa/cluster.yaml](./infa/cluster.yaml) to create Amazon EKS cluster
       ```
      $ eksctl create cluster -f infa/cluster.yaml
      ```
      - Stacks:
-     ![cf_stack_eksctl_production_cluster.png](./screenshots/cf_stack_eksctl_production_cluster.png)
+     ![Stacks.png](./screenshots/Stacks.png)
      - Cluster:
-     ![eks_clusters_production.png](./screenshots/eks_clusters_production.png)
-  3. Configure `kubectl` for Amazon EKS:
+     ![Cluster.png](./screenshots/Cluster.png)
+  3. Configure `kubectl` for Amazon EKS (this is also config permission access to EKS):
       ```
      $ aws eks --region us-west-2 update-kubeconfig --name production
      $ kubectl config current-context
@@ -54,14 +54,14 @@
       ```
      $ kubectl get nodes
       ```
-     ![kubectl_get_nodes.png](./screenshots/kubectl_get_nodes.png)
+     ![EKS_Nodes_Group.png](./screenshots/EKS_Nodes_Group.png)
 - Publish version 1.0:
-  1. Build and push docker image version 1.0
+  1. Build and push docker image version 1.0 to docker-hub container
      ```
      $ make build-docker
      $ make upload-docker
      ```
-  2. Publish the version 1.0 user docker image [nhothuy48cb/flask-app:1.0](https://hub.docker.com/layers/254101442/nhothuy48cb/flask-app/1.0/images/sha256-d9c17a79c90e4f386965bec9594121b99005c60b523b76629c043e88538edfa6?context=repo) (create a deployment `flask-app-1-0` using the [k8s/1.0/deployment.yaml](./k8s/1.0/deployment.yaml) file and create a service `flask-app` using the [k8s/1.0/service.yaml](./k8s/1.0/service.yaml) file)
+  2. Publish the version 1.0 user docker image [hoangdung99er/flask-app:1.0](https://hub.docker.com/layers/279736749/hoangdung99er/flask-app/1.0/images/sha256-82d6aff27b063a1ce530d2a12fa37763cb35901ff7a5b2309f6286f690dac9b5?context=repo) (create a deployment `flask-app-1-0` using the [k8s/1.0/deployment.yaml](./k8s/1.0/deployment.yaml) file and create a service `flask-app` using the [k8s/1.0/service.yaml](./k8s/1.0/service.yaml) file)
      ```
      $ kubectl apply -f k8s/1.0/deployment.yaml
      $ kubectl apply -f k8s/1.0/service.yaml
@@ -77,41 +77,38 @@
 <hr>
 
 ### Setup CircleCI
-Add the following environment variables to your Circle CI project by navigating to {project name} > Settings > Environment Variables as shown [here](https://circleci.com/docs/settings):
 - `AWS_ACCESS_KEY_ID`=(from IAM user with programmatic access)
 - `AWS_SECRET_ACCESS_KEY`=(from IAM user with programmatic access)
 - `AWS_DEFAULT_REGION`=(your default region in aws)
 - `CLUSTER_NAME`=(your eks cluster name, eg: production)
 - `DOCKER_LOGIN`=(your username to login https://hub.docker.com/)
 - `DOCKER_PASSWORD`=(your password to login https://hub.docker.com/)
-- `DOCKER_HUB_ID`=(your docker id in https://hub.docker.com/, eg: nhothuy48cb)
+- `DOCKER_HUB_ID`=(your docker id in https://hub.docker.com/, eg: hoangdung99er)
 - `DOCKER_REPOSITORY`={your repository in https://hub.docker.com/, eg: flask-app}
 <hr>
 
 ### CI/CD Pipeline
 Overview:
-![circleci_pipeline.png]
+![CircleCI_pipline.png](./screenshots/CircleCI_pipline.png)
 Steps:
-1. run-lint: use `hadolint` and `pylint`
-  ![run_lint.png]
-  ![run_lint_failed.png]
+1. run-lint: use `hadolint` and `pylint`, check for linting error of docker file
+  ![Run_lint.png](./screenshots/Run_lint.png)
 2. build-and-push-docker-image: build and push docker image to https://hub.docker.com/
-  ![build_publish_docker_image.png]
-  ![flask_app_docker_image.png]
-- Link to [flask-app Image]
+  ![build_and_publish_images.png](./screenshots/build_and_publish_images.png)
+- Link to [flask-app Image](https://hub.docker.com/repository/docker/hoangdung99er/flask-app/general)
 3. deploy-green: publish the new version as green
-- Using the blue/green deployment pattern, follow the [link]
-- Use [k8s/deployment.yaml] file to create new deployment `flask-app-$LABEL_VERSION` (eg: flask-app-2-0, flask-app-2-1, ..).
+- Using the blue/green deployment pattern, follow the [link](https://docs.aws.amazon.com/whitepapers/latest/overview-deployment-options/bluegreen-deployments.html)
+- Use [k8s/deployment.yaml] file to create new deployment `flask-app-$LABEL_VERSION`
 - Use [k8s/service-green.yaml] file to create a new service (a new Load Balancer) `flask-app-green`, the service only for testing purposes.
-  ![kubectl_get_all_green.png]
+  ![green-deployment.png](./screenshots/green-deployment.png)
 - Green deployment:
-  ![flask_app_green_2.0.png]
+  ![Deploy-new-green.png](./screenshots/Deploy-new-green.png)
 - Blue deployment:
-  ![flask_app_blue_1.0.png]
-6. wait-manual-approval: wait manual approval to target the new version - new blue after verifying that our new version (green deployment) is working correctly.
-   ![approve_job.png]
+  ![Blue_Deployment.png](./screenshots/Blue_Deployment.png)
+6. wait-manual-approval: wait manual approval to keep continue building the new version - new blue after verifying that our new version (green deployment) is working correctly.
+   ![Manual-deploy-blue-deployment.png](./screenshots/Manual-deploy-blue-deployment.png)
 7. deploy-new-blue: target the new version - new blue
 - Blue deployment:
-  ![flask_app_blue_2.0.png]
+  ![Deploy-new-green.png](./screenshots/Deploy-new-green.png)
 8. remove-old-blue: free up the resources (with previous version)
-   ![kubectl_get_all_2.0.png]
+   ![Remove-old-blue.png](./screenshots/Remove-old-blue.png)
