@@ -93,6 +93,7 @@ Overview:
 Steps:
 1. run-lint: use `hadolint` and `pylint`, check for linting error of docker file
   ![Run_lint.png](./screenshots/Run_lint.png)
+  ![Lint-check.png](./screenshots/Lint-check.png)
 2. build-and-push-docker-image: build and push docker image to https://hub.docker.com/
   ![build_and_publish_images.png](./screenshots/build_and_publish_images.png)
 - Link to [flask-app Image](https://hub.docker.com/repository/docker/hoangdung99er/flask-app/general)
